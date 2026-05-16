@@ -1,0 +1,60 @@
+# Configuration de l'analyse comparative.
+# Tous les paramètres sont surchargeables en CLI via --tickers, --start, etc.
+
+data_root: ./data
+results_root: ./results
+
+tickers:
+  - AAPL
+  - MSFT
+  - NVDA
+  - JPM
+  - XOM
+  - SPY
+
+start_date: 2022-01-01      # incluant l'année 1 (warmup HN h_t)
+end_date:   2025-01-01
+
+# Calibration générale
+calibration:
+  loss: iv_vega             # iv_vega | price_rmse
+  maxiter: 200
+  method: L-BFGS-B
+  r_annual: 0.0             # taux sans-risque utilisé partout
+
+# Filtres options (FilterConfig)
+filters:
+  min_price: 0.10
+  max_rel_spread: 0.25
+  min_dte: 7
+  max_dte: 365
+  min_moneyness: 0.7
+  max_moneyness: 1.3
+  min_volume: 1
+
+# HN warmup
+hn_warmup:
+  window_days: 252
+
+# Out-of-sample protocol (rolling, daily)
+oos:
+  horizons: [1, 2, 5]
+  # 6 mois de test : 2 par régime. À ajuster avec tes vraies données.
+  # Le batch n'utilise ces mois que si available_in_data(month) == True.
+  test_months:
+    calm:
+      - 2024-02-01
+      - 2024-05-01
+    normal:
+      - 2023-04-01
+      - 2024-09-01
+    stressed:
+      - 2022-06-01
+      - 2022-10-01
+  # Si null, le batch reclassifie les mois automatiquement via RV SPY 21j.
+  auto_classify_regime_via: SPY     # null pour utiliser les régimes fixés ci-dessus
+
+models:
+  - heston93
+  - hn2000
+  - chj2009
