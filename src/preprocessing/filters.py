@@ -82,11 +82,18 @@ def filter_chain(
 
 
 def add_implied_vol(df: pd.DataFrame, r_annual: float = 0.0) -> pd.DataFrame:
-    """Adds an 'iv' column to a filtered chain. Drops rows with NaN IV."""
-    from ..models import implied_vol
+    """Adds 'iv' and 'vega' columns (market). Uses vectorized Newton-Raphson for speed."""
+    from ..models import implied_vol_vec, bs_vega_vec
+    import numpy as np
     df = df.copy()
-    ivs = []
-    for _, r in df.iterrows():
-        ivs.append(implied_vol(r["mid"], r["spot"], r["strike"], r["dte"] / 365, r_annual, r["right"].lower()))
-    df["iv"] = ivs
-    return df.dropna(subset=["iv"]).reset_index(drop=True)
+    T = (df["dte"] / 365).to_numpy()
+    df["iv"] = implied_vol_vec(
+        df["mid"].to_numpy(), df["spot"].to_numpy(), df["strike"].to_numpy(),
+        T, r_annual, df["right"].to_numpy(),
+    )
+    df = df.dropna(subset=["iv"]).reset_index(drop=True)
+    T2 = (df["dte"] / 365).to_numpy()
+    df["vega"] = bs_vega_vec(
+        df["spot"].to_numpy(), df["strike"].to_numpy(), T2, r_annual, df["iv"].to_numpy()
+    )
+    return df

@@ -6,7 +6,7 @@ from .hn2000 import (
     HNParameters, HNPricer, garch_filter, neg_log_likelihood, AB_recursion,
 )
 from .chj2009 import CHJParameters, CHJPricer
-from .black_scholes import bs_call, bs_put, bs_vega, implied_vol
+from .black_scholes import bs_call, bs_put, bs_vega, implied_vol, implied_vol_vec, bs_vega_vec
 
 MODEL_REGISTRY: dict[str, type[BasePricer]] = {
     "heston93": HestonPricer,
@@ -19,5 +19,5 @@ __all__ = [
     "HestonParameters", "HestonPricer", "heston_AB",
     "HNParameters", "HNPricer", "garch_filter", "neg_log_likelihood", "AB_recursion",
     "CHJParameters", "CHJPricer",
-    "bs_call", "bs_put", "bs_vega", "implied_vol",
+    "bs_call", "bs_put", "bs_vega", "implied_vol", "implied_vol_vec", "bs_vega_vec",
 ]

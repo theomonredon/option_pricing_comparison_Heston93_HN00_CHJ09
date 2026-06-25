@@ -165,19 +165,18 @@ class BasePricer(ABC):
         u, w = _gauss_nodes(n_quad, 1e-8, upper)
         prices = np.empty(N)
 
-        # Toutes les options ont le même log_S (le spot du jour) en pratique,
-        # mais on garde la généralité.
-        # On groupe par (S, T) car char_fn_log dépend de S et T.
-
-        # Tabulons par (log_S, T) car le coût est dans char_fn_log
+        # Group by (log_S, T): char_fn_log is called once per group, then all
+        # strikes in the group are priced in a single vectorized operation
+        # (e_phase is a 2-D matrix [n_opts × n_quad] computed via outer product).
         unique_T = np.unique(T_years)
+        log_S_all = np.log(S)
         for T in unique_T:
             mask_T = T_years == T
-            for log_S_val in np.unique(np.log(S[mask_T])):
-                mask = mask_T & (np.log(S) == log_S_val)
+            for log_S_val in np.unique(log_S_all[mask_T]):
+                mask = mask_T & (log_S_all == log_S_val)
                 if not mask.any():
                     continue
-                # Pour cette (S, T), on calcule phi(u) et phi(u-i) une fois
+
                 phi_u = np.exp(self.char_fn_log(u + 0j, T, log_S_val))
                 phi_u_minus_i = np.exp(self.char_fn_log(u - 1j, T, log_S_val))
                 phi_minus_i = np.exp(
@@ -185,20 +184,24 @@ class BasePricer(ABC):
                 )[0]
 
                 S_val = np.exp(log_S_val)
+                disc = np.exp(-self.r_f * T)
 
-                for idx in np.where(mask)[0]:
-                    K_i = K[idx]
-                    log_K = np.log(K_i)
-                    e_phase = np.exp(-1j * u * log_K)
-                    g1 = np.real(e_phase * phi_u_minus_i / (1j * u * phi_minus_i))
-                    g2 = np.real(e_phase * phi_u / (1j * u))
-                    P1 = 0.5 + (w * g1).sum() / np.pi
-                    P2 = 0.5 + (w * g2).sum() / np.pi
-                    call = S_val * P1 - K_i * np.exp(-self.r_f * T) * P2
-                    if rights[idx] in ("c", "call"):
-                        prices[idx] = call
-                    else:
-                        prices[idx] = call - S_val + K_i * np.exp(-self.r_f * T)
+                indices = np.where(mask)[0]
+                K_grp = K[indices]                        # (m,)
+                log_K = np.log(K_grp)                     # (m,)
+
+                # e_phase[i, j] = exp(-i * log_K[i] * u[j]): shape (m, n_quad)
+                e_phase = np.exp(-1j * np.outer(log_K, u))
+
+                g1 = np.real(e_phase * (phi_u_minus_i / (1j * u * phi_minus_i)))
+                g2 = np.real(e_phase * (phi_u / (1j * u)))
+
+                P1 = 0.5 + (w * g1).sum(axis=1) / np.pi  # (m,)
+                P2 = 0.5 + (w * g2).sum(axis=1) / np.pi  # (m,)
+
+                calls = S_val * P1 - K_grp * disc * P2    # (m,)
+                is_put = ~np.isin(rights[indices], ("c", "call"))
+                prices[indices] = np.where(is_put, calls - S_val + K_grp * disc, calls)
 
         return prices
 

@@ -68,16 +68,23 @@ def initial_pricer(model_name: str, h_next: float | None = None):
 
 
 def hn_filter_h_next(spot_history: pd.DataFrame, target_date: pd.Timestamp,
-                     warmup_days: int, params: HNParameters) -> float:
+                     warmup_days: int, params: HNParameters,
+                     min_warmup: int = 60) -> float:
     """Filtre h_t via fenêtre rolling de `warmup_days` returns avant target_date.
-    Returns h_{target_date + 1 day} (la variance qui s'applique au jour suivant)."""
+
+    Si moins de `warmup_days` sont disponibles, dégrade à `min_warmup` (utilise
+    tout ce qui est dispo). Si même `min_warmup` n'est pas atteint, raise.
+    Returns h_{target_date + 1 day} (la variance qui s'applique au jour suivant).
+    """
     hist = spot_history[spot_history.trade_date < target_date].dropna(subset=["log_return"])
-    if len(hist) < warmup_days:
+    n = len(hist)
+    if n < min_warmup:
         raise DataMissingError(
-            f"Pas assez d'historique pour HN warmup à {target_date.date()} "
-            f"(besoin de {warmup_days}, dispo {len(hist)})"
+            f"Historique insuffisant pour HN warmup à {target_date.date()} "
+            f"(dispo {n}, floor {min_warmup})"
         )
-    rets = hist["log_return"].iloc[-warmup_days:].to_numpy()
+    effective = min(n, warmup_days)
+    rets = hist["log_return"].iloc[-effective:].to_numpy()
     h, _ = garch_filter(rets, params, h0=params.unconditional_variance)
     return float(h[-1])
 
@@ -89,15 +96,23 @@ def trading_days_in_month(month_start: pd.Timestamp, available_dates: pd.Datetim
 
 
 def build_test_calendar(cfg, available_dates: dict[str, pd.DatetimeIndex],
-                        regime_classifier: dict[pd.Timestamp, str] | None = None):
+                        regime_classifier: dict[pd.Timestamp, str] | None = None,
+                        n_days_override: int | None = None):
     """Returns list of (date, regime) tuples — calibration days for the batch.
 
     A date is included only if (a) it falls in one of the test months
-    (b) at least one ticker has data on (d, d+max_horizon)."""
+    (b) at least one ticker has data on (d, d+max_horizon).
+
+    n_days_per_period (from config or n_days_override): max trading days taken
+    per test period. None = full month."""
     rows = []
     test_months_cfg = cfg.oos["test_months"]
     horizons = cfg.oos["horizons"]
     max_h = max(horizons)
+
+    n_days = n_days_override
+    if n_days is None:
+        n_days = cfg.oos.get("n_days_per_period", None)
 
     # Union of available dates across tickers (each ticker filtered later)
     all_dates = sorted(set().union(*[set(d) for d in available_dates.values()]))
@@ -107,6 +122,8 @@ def build_test_calendar(cfg, available_dates: dict[str, pd.DatetimeIndex],
         for m_str in months:
             m = pd.Timestamp(m_str)
             month_days = trading_days_in_month(m, all_dates)
+            if n_days is not None:
+                month_days = month_days[:int(n_days)]
             for d in month_days:
                 # need at least `max_h` business days after d
                 future = all_dates[(all_dates > d) & (all_dates <= d + pd.Timedelta(days=int(max_h * 1.6 + 2)))]
@@ -144,6 +161,8 @@ def main():
     ap.add_argument("--out-params", default="results/params_long.parquet")
     ap.add_argument("--limit", type=int, default=None,
                     help="Optional cap on number of (date, ticker, model) to compute (debug).")
+    ap.add_argument("--n-days", type=int, default=None,
+                    help="Override n_days_per_period from config (max trading days per test period).")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -175,8 +194,11 @@ def main():
         print(f"  regime classifier via SPY RV21: {len(regime_classifier)} dates")
 
     # 3. Build calibration calendar
-    calendar = build_test_calendar(cfg, available, regime_classifier)
-    print(f"Calibration calendar: {len(calendar)} dates")
+    n_days_override = args.n_days if args.n_days is not None else None
+    calendar = build_test_calendar(cfg, available, regime_classifier, n_days_override=n_days_override)
+    n_days_eff = n_days_override or cfg.oos.get("n_days_per_period", None)
+    print(f"Calibration calendar: {len(calendar)} dates "
+          f"(n_days_per_period={'full month' if n_days_eff is None else n_days_eff})")
 
     # 4. Resume from existing output if any
     Path(args.out_metrics).parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +271,14 @@ def main():
                     else:
                         x0 = initial_pricer(model_name)
 
+                    # Multi-start : on peut spécifier soit un dict
+                    # {model: n_starts} soit un int global dans le config.
+                    n_starts_cfg = cfg.calibration.get("n_starts", 1)
+                    if isinstance(n_starts_cfg, dict):
+                        n_starts = int(n_starts_cfg.get(model_name, 1))
+                    else:
+                        n_starts = int(n_starts_cfg)
+
                     t0 = time.time()
                     pricer_opt, info = calibrate(
                         cls, clean, x0,
@@ -256,6 +286,8 @@ def main():
                         loss=cfg.calibration["loss"],
                         method=cfg.calibration["method"],
                         maxiter=cfg.calibration["maxiter"],
+                        n_starts=n_starts,
+                        seed=cfg.calibration.get("seed", 42),
                         verbose=False,
                     )
                     elapsed = time.time() - t0
@@ -271,6 +303,9 @@ def main():
                         "in_sample_mae_iv": in_sample["mae_iv"],
                         "calibration_time_sec": elapsed,
                         "converged": info["converged"],
+                        "n_starts": info.get("n_starts", 1),
+                        "best_start_idx": info.get("best_start_idx", 0),
+                        "n_converged_starts": int(sum(info.get("all_start_converged", [info["converged"]]))),
                     }
 
                     for h, fc in future_chains.items():

@@ -33,16 +33,21 @@ class Config:
     def oos(self) -> dict:
         return self.raw["oos"]
 
+    @property
+    def sectors(self) -> dict[str, list[str]]:
+        """Mapping {sector_name: [tickers]}. Empty dict if not configured."""
+        return dict(self.raw.get("sectors", {}))
+
 
 def load_config(path: str | Path = "config.yaml") -> Config:
-    p = Path(path)
+    p = Path(path).resolve()
     if not p.exists():
         raise FileNotFoundError(f"Config not found: {p}")
     raw = yaml.safe_load(p.read_text())
     return Config(
         raw=raw,
-        data_root=Path(raw["data_root"]),
-        results_root=Path(raw["results_root"]),
+        data_root=(p.parent / raw["data_root"]).resolve(),
+        results_root=(p.parent / raw["results_root"]).resolve(),
         tickers=list(raw["tickers"]),
         start_date=pd.Timestamp(raw["start_date"]),
         end_date=pd.Timestamp(raw["end_date"]),
