@@ -38,6 +38,18 @@ class Config:
         """Mapping {sector_name: [tickers]}. Empty dict if not configured."""
         return dict(self.raw.get("sectors", {}))
 
+    @property
+    def vix_file(self) -> Path | None:
+        """Path to a VIX EOD parquet (date + close). Resolved relative to config."""
+        rel = self.raw.get("vix_file")
+        if rel is None:
+            return None
+        p = Path(rel)
+        if not p.is_absolute():
+            # resolve relative to project root (config.yaml lives there)
+            p = (self.data_root.parent / rel).resolve()
+        return p if p.exists() else None
+
 
 def load_config(path: str | Path = "config.yaml") -> Config:
     p = Path(path).resolve()

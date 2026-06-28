@@ -22,6 +22,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 warnings.filterwarnings("ignore")
@@ -222,6 +223,26 @@ def main():
     new_param_rows = []
     n_processed = 0
 
+    # Pré-calcul du nombre total de travaux pour la progress bar
+    n_starts_cfg = cfg.calibration.get("n_starts", 1)
+    def _n_starts(m):
+        if isinstance(n_starts_cfg, dict):
+            return int(n_starts_cfg.get(m, 1))
+        return int(n_starts_cfg)
+
+    total_jobs = sum(
+        1 for d, _ in calendar for t in cfg.tickers
+        if d in available[t]
+        for m in cfg.models
+        if (d.strftime("%Y-%m-%d"), t, m) not in done_keys
+    )
+    avg_starts = sum(_n_starts(m) for m in cfg.models) / len(cfg.models)
+    print(f"\nTravaux à effectuer : {total_jobs} calibrations "
+          f"(~{avg_starts:.1f} starts/calib en moyenne)\n")
+
+    pbar = tqdm(total=total_jobs, unit="calib", ncols=90,
+                bar_format="{l_bar}{bar}| {n}/{total} [{elapsed}<{remaining}, {rate_fmt}]")
+
     # 5. Outer loop
     for d, regime in calendar:
         for ticker in cfg.tickers:
@@ -347,9 +368,12 @@ def main():
 
                     new_metric_rows.append(row)
                     n_processed += 1
-                    if n_processed % 5 == 0:
-                        print(f"  [{n_processed}] {d.date()} {ticker:6s} {model_name:9s} "
-                              f"loss={row['in_sample_iv_vega_rmse']:.4f} ({elapsed:.1f}s)")
+                    pbar.update(1)
+                    pbar.set_postfix({
+                        "last": f"{ticker}/{model_name[:3]}",
+                        "loss": f"{row['in_sample_iv_vega_rmse']:.3f}",
+                        "t": f"{elapsed:.0f}s",
+                    })
 
                     if args.limit and n_processed >= args.limit:
                         print(f"Limit reached ({args.limit})")
@@ -357,13 +381,14 @@ def main():
                         return
 
                 except Exception as e:
-                    print(f"  ERROR: {d.date()} {ticker} {model_name}: {e}")
-                    traceback.print_exc()
+                    pbar.update(1)
+                    pbar.write(f"  ERROR: {d.date()} {ticker} {model_name}: {e}")
 
                 # Persist every 20 rows
                 if n_processed > 0 and n_processed % 20 == 0:
                     _persist(args, existing, new_metric_rows, new_param_rows)
 
+    pbar.close()
     _persist(args, existing, new_metric_rows, new_param_rows)
     print(f"\nOK Done. {n_processed} new rows. Total: see {args.out_metrics}")
 

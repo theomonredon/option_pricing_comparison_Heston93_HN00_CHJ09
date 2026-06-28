@@ -6,7 +6,7 @@
 
 ## Résumé
 
-Trois modèles à fonction caractéristique sont comparés sur des chaînes d'options réelles AAPL, MSFT, JPM, GS, CVX, XOM (sources : ThetaData). Pour chaque jour de calibration, on extrait les paramètres optimaux en minimisant un RMSE pondéré par vega sur la volatilité implicite, puis on évalue la stabilité du pricing 1, 2 et 5 jours plus tard. Les six tickers sont groupés en trois secteurs (Tech, Financials, Energy), eux-mêmes croisés à trois régimes de volatilité (calm, normal, stressed) classifiés via la volatilité réalisée 21j du SPY.
+Trois modèles à fonction caractéristique sont comparés sur des chaînes d'options réelles pour 10 actions du S&P 500 (sources : ThetaData) : AAPL, MSFT, NVDA, AMZN, JPM, GS, CVX, XOM, PG, UNH. Pour chaque jour de calibration, on extrait les paramètres optimaux en minimisant un RMSE pondéré par vega sur la volatilité implicite, puis on évalue la stabilité du pricing 1, 3, 7 et 15 jours plus tard. Les tickers sont groupés en cinq secteurs (Tech, Consumer, Financials, Energy, Healthcare), croisés à trois régimes de volatilité (calm, normal, stressed) classifiés via le VIX.
 
 ---
 
@@ -54,12 +54,11 @@ Vol réalisée 21j moyenne des 6 tickers, proxy de la VIX. Les bandes
 verticales correspondent aux trois mois de test sélectionnés dans
 `config.yaml` :
 
-- **Calm** (vert) — février 2025
-- **Normal** (orange) — juin 2025
-- **Stressed** (rouge) — janvier 2026
+- **Calm** (vert) — juin 2024 (VIX moy. 12.7)
+- **Normal** (orange) — octobre 2024 (VIX moy. 20.0)
+- **Stressed** (rouge) — avril 2025 (VIX moy. 32.0, pic post-tariffs)
 
-Le choix est fait à l'œil sur cette courbe ; un mode `auto_classify_regime_via: SPY`
-permet de reclassifier automatiquement via la vol réalisée du SPY.
+Seuils : calm < 15, stressed > 25 (VIX close EOD, source ThetaData).
 
 ---
 
@@ -73,9 +72,18 @@ Pour chaque secteur on moyenne le RMSE-IV in-sample sur les tickers et jours de 
 
 ### 2. Fit du smile de volatilité
 
-![Smile fit par secteur](results/figures/02_smile_fit_by_sector.png)
+Une figure par secteur — grille (bucket de maturité) × régime. Courbe noire = IV moyenne de marché, bande grise = ±1σ entre tickers et dates, courbes colorées = fit de chaque modèle calibré.
 
-Grille secteur × régime. Points noirs = IV de marché ; courbes colorées = IV reproduites par chaque modèle calibré. Les modèles SV continus tendent à sous-estimer les puts OTM sur Tech et Financials — signal classique d'un crash risk implicite que ces modèles ne capturent pas (motivation pour un modèle SVJ type Bates 1996).
+**Tech (AAPL, MSFT)**
+![Smile Tech](results/figures/02_smile_tech.png)
+
+**Financials (GS, JPM)**
+![Smile Financials](results/figures/02_smile_financials.png)
+
+**Energy (CVX, XOM)**
+![Smile Energy](results/figures/02_smile_energy.png)
+
+Les modèles SV tendent à sous-estimer les puts OTM courte maturité (aile gauche du smile) — signal de crash risk implicite non capturé sans terme de sauts (Bates 1996). En Energy, le smile est quasi-linéaire et bien reproduit par les trois modèles.
 
 ### 3. Performance prédictive
 

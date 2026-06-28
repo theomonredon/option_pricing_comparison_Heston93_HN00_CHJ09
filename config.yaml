@@ -1,31 +1,38 @@
 data_root: ./data
 results_root: ./results
+vix_file: ../thetadata/data/VIX_2024-01-01_2026-06-10_eod.parquet
 
 tickers:
   - AAPL
   - MSFT
+  - NVDA
+  - AMZN
   - JPM
   - GS
   - CVX
   - XOM
+  - PG
+  - UNH
 
 sectors:
   Tech:       [AAPL, MSFT, NVDA]
+  Consumer:   [AMZN, PG]
   Financials: [JPM, GS]
   Energy:     [CVX, XOM]
+  Healthcare: [UNH]
 
-start_date: 2024-01-02
+start_date: 2023-06-27
 end_date:   2026-03-10
 
 calibration:
   loss: iv_vega
-  maxiter: 500
+  maxiter: 700
   method: L-BFGS-B
   r_annual: 0.0
   n_starts:
-    heston93: 2
-    hn2000:   3
-    chj2009:  5
+    heston93: 3
+    hn2000:   7
+    chj2009:  7
   seed: 42
 
 filters:
@@ -41,12 +48,12 @@ hn_warmup:
   window_days: 252
 
 oos:
-  horizons: [1, 2, 5]
+  horizons: [1, 3, 7, 15]
   n_days_per_period: 2
   test_months:
-    calm:     [2025-02-01]
-    normal:   [2025-06-01]
-    stressed: [2026-01-01]
+    calm:     [2024-06-01]   # VIX 12.7
+    normal:   [2024-10-01]   # VIX 20.0
+    stressed: [2025-04-01]   # VIX 32.0
   auto_classify_regime_via: SPY
 
 models:
