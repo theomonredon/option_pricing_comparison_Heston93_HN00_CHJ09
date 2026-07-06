@@ -1,80 +1,64 @@
-# Option Pricing — Comparaison empirique de Heston (1993), Heston-Nandi (2000) et Christoffersen-Heston-Jacobs (2009)
+# Pricing d'options : Heston (1993), Heston-Nandi (2000) et Christoffersen-Heston-Jacobs (2009) sur données réelles
 
-> Calibration cross-sectionnelle et backtest *rolling one-step-ahead* sur six actions du S&P 500 (trois secteurs), avec décomposition par régime de volatilité.
+J'ai calibré trois modèles à volatilité stochastique sur des chaînes d'options de 10 actions du S&P 500 (données ThetaData), puis mesuré ce que valent encore les paramètres quand on les fige et qu'on re-price les chaînes observées 1, 3, 7 et 15 jours plus tard. Le test est répété dans trois régimes de volatilité repérés sur le VIX : juin 2024 (calme), octobre 2024 (normal) et avril 2025 (stressé, pic qui suit l'annonce des tarifs douaniers américains).
 
----
+L'objectif n'est pas de désigner « le meilleur modèle » mais de quantifier un arbitrage classique : un modèle plus riche fitte mieux la surface du jour, mais est-ce que ça tient le lendemain ?
 
-## Résumé
+## Les trois modèles
 
-Trois modèles à fonction caractéristique sont comparés sur des chaînes d'options réelles pour 10 actions du S&P 500 (sources : ThetaData) : AAPL, MSFT, NVDA, AMZN, JPM, GS, CVX, XOM, PG, UNH. Pour chaque jour de calibration, on extrait les paramètres optimaux en minimisant un RMSE pondéré par vega sur la volatilité implicite, puis on évalue la stabilité du pricing 1, 3, 7 et 15 jours plus tard. Les tickers sont groupés en cinq secteurs (Tech, Consumer, Financials, Energy, Healthcare), croisés à trois régimes de volatilité (calm, normal, stressed) classifiés via le VIX.
-
----
-
-## Méthodologie
-
-### Cadre commun aux trois modèles
-
-Les trois modèles partagent la structure affine de la fonction caractéristique du log-prix sous la mesure risque-neutre :
+Les trois partagent la même structure : une fonction caractéristique affine du log-prix sous la mesure risque-neutre,
 
 ```
 φ(u, τ) = exp[ i·u·(log S₀ + r·τ) + A(τ, u) + B(τ, u)·V₀ ]
 ```
 
-Le prix d'un call s'en déduit par inversion de Fourier (formule de Heston 1993, intégrale de `quad` numérique). On change de modèle = on change la façon de calculer A et B :
+et le prix du call s'obtient par la formule d'inversion de Fourier de Heston (1993), évaluée par quadrature de Gauss-Legendre (64 nœuds). Changer de modèle revient à changer le calcul de A et B :
 
-| Modèle | Origine de (A, B) | État | # params |
+| Modèle | Origine de (A, B) | Variance d'état | Paramètres libres |
 |---|---|---|---|
-| Heston 1993 | Solution close des Riccati ODE | V₀ scalaire | 5 |
-| Heston-Nandi 2000 | Récursion discrète backward | h_t scalaire **filtré** depuis returns | 6 |
-| CHJ 2009 | Somme de deux Heston indépendants | (V₁, V₂) | 10 |
+| Heston 1993 | Solution fermée des ODE de Riccati | V₀ scalaire | 5 |
+| Heston-Nandi 2000 | Récursion discrète (journalière) | h_t, filtré depuis les returns puis recalibré | 6 |
+| CHJ 2009 | Somme de deux facteurs Heston indépendants | (V₁, V₂) | 10 |
 
-### Calibration
+CHJ contient Heston comme cas particulier : il suffit d'éteindre le second facteur. Ça compte pour interpréter les résultats (voir plus bas).
 
-- **Loss** : RMSE pondéré par vega Black-Scholes sur la volatilité implicite (standard Christoffersen-Jacobs 2004).
-- **Optimiseur** : L-BFGS-B avec reparamétrisation log sur les paramètres positifs, `maxiter=500`.
-- **Multi-start** : 2/3/5 points initiaux pour Heston/HN/CHJ respectivement, on garde le meilleur. Atténue le risque de minima locaux.
-- **Filtres options** : bid > 0, mid ≥ 0.10, spread relatif ≤ 25 %, DTE ∈ [7, 365], moneyness ∈ [0.7, 1.3], volume ≥ 1, mid ≥ valeur intrinsèque.
+## Données et calibration
 
-### Protocole *rolling one-step-ahead*
+- **Données** : chaînes d'options EOD (calls et puts) de AAPL, MSFT, NVDA, AMZN, PG, JPM, GS, CVX, XOM, UNH, groupées en 5 secteurs. Entre ~50 et 400 options par (ticker, jour) après filtrage.
+- **Filtres** : bid > 0, mid ≥ 0.10 $, spread relatif ≤ 25 %, maturité 7 à 365 jours, moneyness 0.7 à 1.3, volume ≥ 1, mid ≥ valeur intrinsèque.
+- **Loss** : RMSE sur volatilité implicite pondéré par le vega Black-Scholes (Christoffersen-Jacobs 2004).
+- **Optimisation** : L-BFGS-B, reparamétrisation log des paramètres positifs, maxiter 700, multi-start avec 3 départs pour Heston et 7 pour HN et CHJ (on garde le meilleur).
+- **Protocole** : pour chaque jour de calibration d, je calibre sur la chaîne du jour puis, paramètres figés, je price les chaînes de d+1, d+3, d+7 et d+15. Pour HN, la variance conditionnelle h_t est mise à jour via la récursion GARCH avec les returns réalisés (c'est le fonctionnement normal du modèle) ; les autres paramètres restent figés. Deux jours de calibration par mois de test, soit 6 dates par ticker.
 
-Pour chaque jour `d` du calendrier de test :
-1. Calibrer le modèle sur les ~300-400 options observées à `d`. → paramètres θ.
-2. Avec θ figé, pricer les options observées à `d + 1`, `d + 2`, `d + 5`. → erreurs out-of-sample.
-3. Pour HN, mettre à jour `h_t` via la récursion GARCH sur les returns observés entre `d` et `d + k`.
-
-Les jours `d` sont choisis dans trois mois représentant trois régimes de volatilité, deux jours par mois.
-
-### Sélection des régimes
+### Régimes de volatilité
 
 <p align="center">
   <img src="results/figures/00_vol_context.png" width="780"/>
 </p>
 
-Vol réalisée 21j moyenne des 6 tickers, proxy de la VIX. Les bandes
-verticales correspondent aux trois mois de test sélectionnés dans
-`config.yaml` :
-
-- **Calm** (vert) — juin 2024 (VIX moy. 12.7)
-- **Normal** (orange) — octobre 2024 (VIX moy. 20.0)
-- **Stressed** (rouge) — avril 2025 (VIX moy. 32.0, pic post-tariffs)
-
-Seuils : calm < 15, stressed > 25 (VIX close EOD, source ThetaData).
-
----
+VIX close (source ThetaData). Les bandes verticales sont les trois mois de test définis dans `config.yaml` ; les seuils calm < 15 et stressed > 25 sont arbitraires mais standards.
 
 ## Résultats
 
-### 1. Qualité du fit in-sample par secteur
+Vue d'ensemble en points de vol (RMSE sur volatilité implicite, moyenne sur tous les tickers et régimes) :
+
+| | In-sample | J+1 | J+15 | Temps médian de calibration | Convergence |
+|---|---|---|---|---|---|
+| Heston 93 | 3.5 | 4.5 | 5.9 | 30 s | 83 % |
+| HN 00 | 3.5 | 5.2 | **5.4** | 203 s | 100 % |
+| CHJ 09 | **2.9** | **4.0** | 5.9 | 190 s | 63 % |
+
+### Fit in-sample
 
 ![In-sample par secteur](results/figures/01_in_sample_by_sector.png)
 
-Pour chaque secteur on moyenne le RMSE-IV in-sample sur les tickers et jours de calibration. Heston domine en Tech ; CHJ et Heston se partagent Financials et Energy.
+CHJ fitte mieux presque partout, ce qui est attendu : les modèles sont emboîtés, un fit in-sample supérieur de CHJ ne prouve rien en soi. L'information utile est ailleurs : l'écart est modeste (~0.5 point de vol en moyenne), et les rares cas où Heston passe devant CHJ trahissent une calibration de CHJ coincée dans un minimum local (taux de convergence de 63 % seulement, malgré 7 départs).
 
-### 2. Fit du smile de volatilité
+### Fit du smile
 
-Une figure par secteur — grille (bucket de maturité) × régime. Courbe noire = IV moyenne de marché, bande grise = ±1σ entre tickers et dates, courbes colorées = fit de chaque modèle calibré.
+Courbe noire = IV de marché moyenne (bande grise = ±1σ entre tickers et dates), courbes colorées = smile re-pricé par chaque modèle.
 
-**Tech (AAPL, MSFT)**
+**Tech (AAPL, MSFT, NVDA)**
 ![Smile Tech](results/figures/02_smile_tech.png)
 
 **Financials (GS, JPM)**
@@ -83,71 +67,68 @@ Une figure par secteur — grille (bucket de maturité) × régime. Courbe noire
 **Energy (CVX, XOM)**
 ![Smile Energy](results/figures/02_smile_energy.png)
 
-Les modèles SV tendent à sous-estimer les puts OTM courte maturité (aile gauche du smile) — signal de crash risk implicite non capturé sans terme de sauts (Bates 1996). En Energy, le smile est quasi-linéaire et bien reproduit par les trois modèles.
+Le défaut commun est net : aucun des trois modèles ne descend assez dans l'aile gauche des maturités courtes (puts OTM). C'est le crash risk implicite que la diffusion seule ne capture pas ; il faudrait un terme de sauts (Bates 1996). En Energy le smile est presque plat et les trois modèles s'en sortent bien. Les figures Consumer et Healthcare sont dans `results/figures/`.
 
-### 3. Performance prédictive
+### Dégradation hors-échantillon
 
-![Performance prédictive](results/figures/03_predictive_by_sector.png)
+![Dégradation OOS](results/figures/03_predictive_by_sector.png)
 
-Comparaison in-sample / OOS J+1 / OOS J+5 par modèle et par secteur. L'écart in-sample → OOS mesure le surfit : si la loss explose à J+1, c'est que les paramètres calibrés collent au panel d'aujourd'hui mais ne généralisent pas.
+C'est le cœur du projet. Trois constats :
 
-### 4. Vue de synthèse
+1. **L'avantage de CHJ s'érode avec l'horizon.** Encore net à J+1, il a disparu à J+15 où les trois modèles se valent (5.4 à 5.9 points de vol). Signature classique du sur-ajustement d'un modèle riche recalibré chaque jour.
+2. **HN est le plus stable à long horizon**, ce qui est cohérent avec sa construction : le filtre GARCH réinjecte l'information des returns réalisés, là où Heston et CHJ gardent un V₀ daté du jour de calibration.
+3. **En régime stressé, rien ne tient.** Le RMSE IV passe de ~3.5 points in-sample à 15-18 points à J+3/J+7 en avril 2025 : la surface bouge trop vite pour des paramètres figés, quel que soit le modèle. HN limite un peu la casse.
+
+### Synthèse
 
 ![Heatmap synthèse](results/figures/05_heatmap_synthesis.png)
 
-Heatmap (régime × modèle) × secteur. Vert = meilleur fit, encadré rouge = meilleur modèle dans chaque cellule (secteur, régime). Heston gagne la majorité des cellules ; CHJ s'impose sur les régimes/secteurs où la term structure compte le plus.
+Meilleur modèle par (secteur, régime), mesuré hors-échantillon à J+1 — comparer in-sample avantagerait mécaniquement CHJ. CHJ gagne la majorité des cellules à J+1 ; sur les horizons plus longs le classement se resserre puis s'inverse au profit de HN.
 
----
+## Ce que je retiens
 
-## Structure du projet
+- **CHJ tient sa promesse sur le fit** (le second facteur de variance aide vraiment sur la term structure) mais son avantage prédictif ne dépasse pas quelques jours, et sa calibration est fragile.
+- **Heston offre le meilleur rapport qualité/coût** : 6 fois plus rapide, jamais très loin de CHJ.
+- **HN est le seul dont l'état se met à jour sans recalibration**, et ça se voit à J+15. En contrepartie, son fit du jour est le moins bon et sa calibration est la plus lente.
 
-```
-src/
-  models/         BasePricer + Heston/HN/CHJ + Black-Scholes
-  preprocessing/  chargement multi-ticker, 7 filtres options, IV vectorisée
-  calibration/    optimiseur polymorphe (loss + multi-start)
-  analysis/       métriques, plots, mapping sectoriel data-driven
+## Limites
 
-scripts/
-  validate_data.py   pre-flight check disponibilité données
-  run_batch.py       batch reprenable (in-sample + OOS rolling)
+- 6 dates de calibration par ticker : assez pour dégager les ordres de grandeur, pas pour des tests statistiques sérieux entre modèles proches.
+- Taux sans risque fixé à 0 et dividendes ignorés. Tous les modèles subissent le même biais donc la comparaison reste valable, mais les niveaux d'IV en sont légèrement faussés (les taux courts étaient ~4-5 % sur la période).
+- Pas de sauts, d'où le biais systématique sur les puts OTM courts. Extension naturelle : Bates (1996).
+- Calibration purement cross-sectionnelle (surface du jour). Christoffersen, Heston et Jacobs (2013) montrent qu'une calibration jointe options + returns est plus robuste, en particulier pour identifier les paramètres de la dynamique.
+- Options américaines pricées comme européennes. L'effet est faible pour les calls sans dividende et les maturités courtes, moins négligeable pour les puts ITM.
 
-notebooks/
-  analysis.ipynb     rapport pré-calculé (lit results/*.parquet)
-
-config.yaml          tickers, dates, secteurs, régimes, horizons OOS
-results/figures/     PNG exportés par le notebook (utilisés ci-dessus)
-```
-
----
-
-## Reproduction
+## Reproduire
 
 ```bash
 pip install -r requirements.txt
 
-# 1. Placer les chaînes options sous data/<TICKER>/<YYYY>/<MM>/<YYYY-MM-DD>_{call|put}.parquet
+# 1. Placer les chaînes sous data/<TICKER>/<YYYY>/<MM>/<YYYY-MM-DD>_{call|put}.parquet
+#    (données ThetaData, non incluses dans le repo)
 # 2. Vérifier la couverture
 python scripts/validate_data.py
 
-# 3. Batch (resumable)
+# 3. Lancer le batch (reprenable : relancer reprend où il s'était arrêté)
 python scripts/run_batch.py
 
-# 4. Rapport
+# 4. Analyse
 jupyter notebook notebooks/analysis.ipynb
 ```
 
-Ajouter un secteur ou un ticker se fait dans `config.yaml` uniquement — le pipeline et le notebook s'adaptent automatiquement.
+Ajouter un ticker ou un secteur se fait dans `config.yaml` ; le batch et le notebook s'y adaptent.
 
----
-
-## Limites et extensions
-
-- **6 tickers, 6 jours par ticker.** Statistiquement modeste — convient à une vitrine, pas à des conclusions définitives.
-- **Aucun jump** dans les trois modèles → biais systématique sur les puts OTM courte maturité. Extension naturelle : Bates 1996 (SV + Poisson jumps).
-- **Calibration purement cross-sectionnelle.** Pour HN, on filtre `h_t` depuis l'historique de returns, mais les autres paramètres sont identifiés via la surface d'options du jour. Christoffersen-Heston-Jacobs (2013) proposent une calibration jointe options + returns plus robuste.
-
----
+```
+src/
+  models/         BasePricer (inversion de Fourier) + Heston / HN / CHJ + Black-Scholes
+  preprocessing/  chargement des chaînes, filtres, IV vectorisée
+  calibration/    losses + optimiseur multi-start
+  analysis/       métriques, secteurs
+scripts/
+  validate_data.py, run_batch.py
+notebooks/
+  analysis.ipynb  (lit les parquets de results/, ne recalibre rien)
+```
 
 ## Références
 
@@ -155,3 +136,4 @@ Ajouter un secteur ou un ticker se fait dans `config.yaml` uniquement — le pip
 - Heston, S. L., & Nandi, S. (2000). *A closed-form GARCH option valuation model.* Review of Financial Studies, 13(3), 585-625.
 - Christoffersen, P., Heston, S., & Jacobs, K. (2009). *The shape and term structure of the index option smirk: Why multifactor stochastic volatility models work so well.* Management Science, 55(12), 1914-1932.
 - Christoffersen, P., & Jacobs, K. (2004). *The importance of the loss function in option valuation.* Journal of Financial Economics, 72(2), 291-318.
+- Bates, D. S. (1996). *Jumps and stochastic volatility: Exchange rate processes implicit in Deutsche Mark options.* Review of Financial Studies, 9(1), 69-107.

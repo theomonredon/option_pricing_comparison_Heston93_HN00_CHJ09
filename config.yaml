@@ -1,6 +1,6 @@
 data_root: ./data
 results_root: ./results
-vix_file: ../thetadata/data/VIX_2024-01-01_2026-06-10_eod.parquet
+vix_file: ./data/VIX_2024-01-01_2026-06-10_eod.parquet
 
 tickers:
   - AAPL
@@ -54,7 +54,6 @@ oos:
     calm:     [2024-06-01]   # VIX 12.7
     normal:   [2024-10-01]   # VIX 20.0
     stressed: [2025-04-01]   # VIX 32.0
-  auto_classify_regime_via: SPY
 
 models:
   - heston93

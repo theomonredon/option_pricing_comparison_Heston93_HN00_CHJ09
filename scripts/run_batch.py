@@ -1,6 +1,7 @@
 """Batch unifié : pour chaque (date, ticker, model) du protocole rolling OOS :
    1. Calibre le modèle au jour d (in-sample)
-   2. Avec les mêmes params, pricer les options aux jours d+1, d+2, d+5 (OOS)
+   2. Avec les mêmes params, pricer les options aux horizons OOS de config.yaml
+      (J+1, J+3, J+7, J+15 par défaut)
    3. Persiste le tout dans results/batch_results.parquet et results/params_long.parquet
 
 Reprenable : si batch_results.parquet existe, on saute les (date, ticker, model)
@@ -12,10 +13,8 @@ Usage:
 
 from __future__ import annotations
 import argparse
-import json
 import sys
 import time
-import traceback
 import warnings
 from pathlib import Path
 from datetime import date
@@ -39,7 +38,6 @@ from src.models import (
     garch_filter,
 )
 from src.calibration import calibrate, evaluate_metrics
-from src.analysis.metrics import classify_regime, realized_vol_series
 
 
 # -------------------------------------------------------------------- utility
@@ -97,7 +95,6 @@ def trading_days_in_month(month_start: pd.Timestamp, available_dates: pd.Datetim
 
 
 def build_test_calendar(cfg, available_dates: dict[str, pd.DatetimeIndex],
-                        regime_classifier: dict[pd.Timestamp, str] | None = None,
                         n_days_override: int | None = None):
     """Returns list of (date, regime) tuples — calibration days for the batch.
 
@@ -130,10 +127,7 @@ def build_test_calendar(cfg, available_dates: dict[str, pd.DatetimeIndex],
                 future = all_dates[(all_dates > d) & (all_dates <= d + pd.Timedelta(days=int(max_h * 1.6 + 2)))]
                 if len(future) < max_h:
                     continue
-                r = regime
-                if regime_classifier is not None:
-                    r = regime_classifier.get(pd.Timestamp(d.date()), regime)
-                rows.append((d, r))
+                rows.append((d, regime))
     # dedup, keep first regime if same date appears twice
     seen = {}
     for d, r in rows:
@@ -179,24 +173,13 @@ def main():
         print(f"ERROR: {e}")
         sys.exit(1)
 
-    # 2. Spot histories (warmup HN + regime classification)
+    # 2. Spot histories (warmup HN)
     print("Loading spot histories...")
     histories = {t: load_spot_history(t, cfg.data_root) for t in cfg.tickers}
-    spy_hist = histories.get("SPY")
-
-    regime_classifier = None
-    if spy_hist is not None and cfg.oos.get("auto_classify_regime_via") == "SPY":
-        rv = realized_vol_series(spy_hist["log_return"], window=21)
-        regime_classifier = {
-            pd.Timestamp(r.trade_date.date()): classify_regime(r_val)
-            for (_, r), r_val in zip(spy_hist.iterrows(), rv)
-            if not pd.isna(r_val)
-        }
-        print(f"  regime classifier via SPY RV21: {len(regime_classifier)} dates")
 
     # 3. Build calibration calendar
     n_days_override = args.n_days if args.n_days is not None else None
-    calendar = build_test_calendar(cfg, available, regime_classifier, n_days_override=n_days_override)
+    calendar = build_test_calendar(cfg, available, n_days_override=n_days_override)
     n_days_eff = n_days_override or cfg.oos.get("n_days_per_period", None)
     print(f"Calibration calendar: {len(calendar)} dates "
           f"(n_days_per_period={'full month' if n_days_eff is None else n_days_eff})")
